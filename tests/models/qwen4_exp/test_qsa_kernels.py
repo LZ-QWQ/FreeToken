@@ -240,13 +240,14 @@ TOPK_SHAPES = [(512, 512), (4096, 512)]
 
 
 def _torch_topk_blocks(logits, visible, width):
-    """The torch.topk fallback of ``qsa_sparse._top_blocks``, kept here as the reference."""
+    """Torch reference with the kernel's documented lowest-column tie break."""
     columns = logits.shape[1]
     out = torch.full((logits.shape[0], width), -1, dtype=torch.int32, device=logits.device)
     column = torch.arange(columns, device=logits.device)
     masked = logits.masked_fill(column.unsqueeze(0) >= visible.unsqueeze(1), -float("inf"))
     take = min(width, columns)
-    values, chosen = torch.topk(masked, take, dim=-1)
+    chosen = torch.argsort(masked, dim=-1, descending=True, stable=True)[:, :take]
+    values = masked.gather(-1, chosen)
     out[:, :take] = torch.where(values > -float("inf"), chosen.to(torch.int32), -1)
     return out
 
@@ -280,7 +281,7 @@ def test_block_topk_matches_torch_topk(n_blocks: int, width: int, bs: int, mode:
     qsa_block_topk(logits, visible, blocks)
     expected = _torch_topk_blocks(logits, visible, width)
 
-    # Selection is a set: torch.topk orders by descending score, the kernel by column id.
+    # Selection is a set; the kernel stores selected columns in column-id order.
     torch.testing.assert_close(blocks.sort(-1).values, expected.sort(-1).values)
     live = (blocks >= 0).sum(-1)
     torch.testing.assert_close(live, (expected >= 0).sum(-1))

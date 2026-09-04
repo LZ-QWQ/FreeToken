@@ -145,7 +145,9 @@ def test_chunked_prefill_matches_one_shot(cut: int):
     attn.forward(x[:cut], fixture.batch([head], "prefill"))
     tail = fixture.req(1, cut, length)
     got = attn.forward(x[cut:], fixture.batch([tail], "prefill"))
-    assert torch.equal(got, one_shot[cut:])
+    # Chunking changes the GPU reduction schedule; require numerical equivalence rather
+    # than bit identity across backends.
+    torch.testing.assert_close(got.float(), one_shot[cut:].float(), rtol=2e-2, atol=2e-4)
 
 
 @requires_cuda

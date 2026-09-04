@@ -139,7 +139,9 @@ def test_single_layer_matches_hf_reference(monkeypatch):
         scores, batch.positions, args.index_ratio, args.index_budget
     )
     jaccard = _jaccard(indices, reference_selection)
-    assert jaccard.min() >= 0.97, f"worst-row Jaccard {jaccard.min():.4f}"
+    # A different GPU reduction order may move one near-boundary block in a top-64 set.
+    # One replacement has Jaccard 63 / 65; two replacements fall below this threshold.
+    assert jaccard.min() >= 0.96, f"worst-row Jaccard {jaccard.min():.4f}"
 
     own_selection = [row[row >= 0].long().sort().values for row in indices]
     reference = _hf_layer_output(x, attn, config, batch.positions, own_selection)
