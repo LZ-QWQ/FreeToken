@@ -10,7 +10,6 @@ import freetoken.moe.nvfp4_backends as nvfp4_backends
 _CUDA_ONLY_PROBES = (
     backend.is_flashinfer_installed,
     backend.is_sgl_kernel_installed,
-    backend.is_triton_kernels_installed,
 )
 
 
