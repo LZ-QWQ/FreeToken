@@ -1,1 +1,2 @@
 Temporary fork-only file used to validate the ROCm pull-request workflow trigger.
+This update triggers the synchronize event after the base workflow fix.
