@@ -170,8 +170,12 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends libthrust-dev
+          if dpkg-query -W -f='${Status}\n' libthrust-dev 2>/dev/null | grep -qx 'install ok installed'; then
+            echo "libthrust-dev is already installed"
+          else
+            apt-get update
+            apt-get install -y --no-install-recommends libthrust-dev
+          fi
 
       - name: Install FreeToken
         run: |
