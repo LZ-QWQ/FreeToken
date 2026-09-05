@@ -78,16 +78,10 @@ jobs:
       XDG_CACHE_HOME: /tmp/freetoken-ci/xdg
 
     steps:
-      - name: Validate pull request revision
-        if: github.event_name == 'pull_request_target'
-        env:
-          PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
-        run: test -n "$PR_MERGE_SHA"
-
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event_name == 'pull_request_target' && github.event.pull_request.merge_commit_sha || github.sha }}
+          ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
           fetch-depth: 2
           persist-credentials: false
           allow-unsafe-pr-checkout: true
