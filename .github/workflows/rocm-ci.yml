@@ -91,7 +91,7 @@ jobs:
 
           # The runner host must already be logged in to the Aliyun registry.
           docker pull "$ROCM_CI_IMAGE"
-          docker run --rm --init \
+          docker run --rm --init -i \
             --device=/dev/kfd \
             "${gpu_devices[@]}" \
             --ipc=host \
