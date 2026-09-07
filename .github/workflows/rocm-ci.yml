@@ -83,6 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$ARTIFACT_DIR"
+          chmod 0777 "$ARTIFACT_DIR"
 
           gpu_devices=(--device=/dev/dri/renderD134)
           if [[ "$SUITE" == "nightly" || "$SUITE" == "full" ]]; then
