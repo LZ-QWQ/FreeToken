@@ -1,4 +1,6 @@
 name: ROCm CI
+run-name: >-
+  ROCm CI / ${{ github.event_name == 'pull_request_target' && format('PR #{0} / pr', github.event.pull_request.number) || github.event_name == 'push' && 'main push / pr' || github.event_name == 'schedule' && 'scheduled / nightly' || format('manual / {0}', inputs.suite) }}
 
 on:
   pull_request_target:
