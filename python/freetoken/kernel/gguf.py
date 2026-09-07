@@ -125,11 +125,6 @@ def _module():
         from freetoken.kernel.utils import _rocm_link_flags
 
         extra_ldflags = _rocm_link_flags()
-        # Ubuntu's generic Thrust headers otherwise select the CUDA backend and
-        # try to include cuda_runtime_api.h. GGUF only reaches Thrust through a
-        # libtorch complex-number header, so the backend-neutral C++ path is
-        # sufficient for HIP compilation.
-        extra_cuda_cflags.append("-DTHRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CPP")
         extra_cuda_cflags, rocm_arches = _rocm_gguf_build_config(extra_cuda_cflags)
         csrc = _staged_rocm_sources()
     else:
