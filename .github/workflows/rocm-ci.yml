@@ -85,6 +85,9 @@ jobs:
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          # Restricted self-hosted runners can override this repository variable;
+          # normal and upstream runners continue to use the official GitHub URL.
+          github-server-url: ${{ vars.ROCM_CI_GITHUB_SERVER_URL || github.server_url }}
           ref: ${{ github.event_name == 'pull_request_target' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
           fetch-depth: 2
           persist-credentials: false
