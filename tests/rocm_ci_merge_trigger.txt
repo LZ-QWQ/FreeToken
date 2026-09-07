@@ -1,1 +1,0 @@
-Temporary fork-only file used to validate PR-to-main merge CI triggering.
