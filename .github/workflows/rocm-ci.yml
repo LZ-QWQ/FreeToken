@@ -53,11 +53,9 @@ jobs:
     timeout-minutes: ${{ (inputs.suite == 'aime' || inputs.suite == 'full') && 720 || 90 }}
 
     container:
-      # The public fallback is self-contained but starts with PyTorch 2.10; the
-      # setup step below upgrades it with AMD's ROCm 7.2.4 PyTorch 2.11 wheels.
-      # Self-hosted deployments can point ROCM_CI_IMAGE at a prebuilt image to
-      # avoid downloading those wheels for every job.
-      image: ${{ vars.ROCM_CI_IMAGE || 'rocm/pytorch:rocm7.2.4_ubuntu24.04_py3.12_pytorch_release_2.10.0@sha256:4449f856653602317e4101a76fce599c7fcd58ccec2e539951fce5f73083179e' }}
+      # The runner must be logged in to the registry before its service starts.
+      # Pinning the manifest keeps PR jobs independent of mutable image tags.
+      image: ${{ vars.ROCM_CI_IMAGE || 'crpi-ygzb1jbfyj9pjrm6.cn-shenzhen.personal.cr.aliyuncs.com/images_hana/freetoken:rocm7.2.4-pytorch2.11-triton3.7-ubuntu24.04@sha256:c923feabfc87844da6358f64c55f211c21ce3117048853e635fabcfd335fda13' }}
       options: >-
         --device=/dev/kfd
         ${{ (github.event_name == 'schedule' || inputs.suite == 'nightly' || inputs.suite == 'full') && '--device=/dev/dri/renderD134 --device=/dev/dri/renderD135' || '--device=/dev/dri/renderD134' }}
@@ -78,8 +76,6 @@ jobs:
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_INDEX_URL: ${{ vars.ROCM_CI_PIP_INDEX_URL || 'https://pypi.org/simple' }}
       PYTHONUNBUFFERED: "1"
-      ROCM_TORCH_WHEEL: https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.4/torch-2.11.0%2Brocm7.2.4.lw.git5fbd98f3-cp312-cp312-linux_x86_64.whl
-      ROCM_TRITON_WHEEL: https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.4/triton-3.7.0%2Brocm7.2.4.gitb4e20bbe-cp312-cp312-linux_x86_64.whl
       ROCR_VISIBLE_DEVICES: "0"
       TORCH_EXTENSIONS_DIR: /tmp/freetoken-ci/torch-extensions
       TRITON_CACHE_DIR: /tmp/freetoken-ci/triton
@@ -105,17 +101,9 @@ jobs:
             echo "name=pr" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install supported ROCm Python stack
+      - name: Validate supported ROCm Python stack
         run: |
-          if python -c 'import torch, triton; assert torch.__version__.startswith("2.11.0+rocm7.2.4"); assert triton.__version__.startswith("3.7.0+rocm7.2.4")'; then
-            echo "The image already contains the required ROCm Python stack"
-          else
-            python -m pip install --no-cache-dir --upgrade --force-reinstall \
-              "$ROCM_TORCH_WHEEL" "$ROCM_TRITON_WHEEL"
-            # The public base image carries the PyTorch 2.10 companion builds;
-            # FreeToken does not use them, and retaining them breaks pip check.
-            python -m pip uninstall -y torchvision torchaudio
-          fi
+          python -c 'import torch, triton; assert torch.__version__.startswith("2.11.0+rocm7.2.4"); assert triton.__version__.startswith("3.7.0+rocm7.2.4")'
 
       - name: Validate ROCm runtime
         run: |
