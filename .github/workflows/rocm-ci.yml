@@ -55,7 +55,7 @@ jobs:
     container:
       # The runner must be logged in to the registry before its service starts.
       # Pinning the manifest keeps PR jobs independent of mutable image tags.
-      image: ${{ vars.ROCM_CI_IMAGE || 'crpi-ygzb1jbfyj9pjrm6.cn-shenzhen.personal.cr.aliyuncs.com/images_hana/freetoken:rocm7.2.4-pytorch2.11-triton3.7-ubuntu24.04@sha256:c923feabfc87844da6358f64c55f211c21ce3117048853e635fabcfd335fda13' }}
+      image: ${{ vars.ROCM_CI_IMAGE || 'crpi-ygzb1jbfyj9pjrm6.cn-shenzhen.personal.cr.aliyuncs.com/images_hana/freetoken:rocm7.2.4-pytorch2.11-triton3.7-ubuntu24.04-v1@sha256:19898348c72e6dc11325e9a502f0a5f5e7cdba22f8977867a346d97a738158f3' }}
       options: >-
         --device=/dev/kfd
         ${{ (github.event_name == 'schedule' || inputs.suite == 'nightly' || inputs.suite == 'full') && '--device=/dev/dri/renderD134 --device=/dev/dri/renderD135' || '--device=/dev/dri/renderD134' }}
