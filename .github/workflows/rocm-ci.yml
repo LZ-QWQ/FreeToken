@@ -149,6 +149,7 @@ jobs:
           printf 'FREETOKEN_QWEN4_HF_PYTHON=%s\n' "$(command -v python)" >> "$GITHUB_ENV"
 
       - name: Run nightly tests
+        id: nightly
         if: env.SUITE == 'nightly' || env.SUITE == 'full'
         run: |
           { time python -m pytest tests --ignore=tests/e2e/test_aime.py \
@@ -157,6 +158,7 @@ jobs:
             2>&1 | tee "$RUNNER_TEMP/rocm-ci/pytest-nightly.log"
 
       - name: Run AIME test
+        id: aime
         if: env.SUITE == 'aime' || env.SUITE == 'full'
         env:
           FREETOKEN_AIME_MAX_TOKENS: "16384"
@@ -170,6 +172,81 @@ jobs:
           { time python -m pytest tests/e2e/test_aime.py -ra --durations=10 \
               --junitxml="$RUNNER_TEMP/rocm-ci/pytest-rocm-aime.xml"; } \
             2>&1 | tee "$RUNNER_TEMP/rocm-ci/pytest-aime.log"
+
+      - name: Write test summary
+        if: always()
+        continue-on-error: true
+        env:
+          AIME_OUTCOME: ${{ steps.aime.outcome }}
+          NIGHTLY_OUTCOME: ${{ steps.nightly.outcome }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/rocm-ci"
+          python - <<'PY'
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          result_dir = Path(os.environ["RUNNER_TEMP"]) / "rocm-ci"
+          selected_suite = os.environ["SUITE"]
+
+          def counts(xml_path):
+              if not xml_path.is_file():
+                  return ["-"] * 5
+              try:
+                  root = ET.parse(xml_path).getroot()
+                  test_suites = [root] if "tests" in root.attrib else list(root)
+                  tests = sum(int(suite.attrib.get("tests", 0)) for suite in test_suites)
+                  failed = sum(int(suite.attrib.get("failures", 0)) for suite in test_suites)
+                  errors = sum(int(suite.attrib.get("errors", 0)) for suite in test_suites)
+                  skipped = sum(int(suite.attrib.get("skipped", 0)) for suite in test_suites)
+                  passed = tests - failed - errors - skipped
+                  duration = f'{sum(float(suite.attrib.get("time", 0)) for suite in test_suites):.2f}s'
+                  return [passed, failed, errors, skipped, duration]
+              except (ET.ParseError, TypeError, ValueError):
+                  return ["-"] * 5
+
+          def deselected(log_path):
+              if not log_path.is_file():
+                  return "-"
+              matches = re.findall(r"(\d+) deselected", log_path.read_text(errors="replace"))
+              return int(matches[-1]) if matches else 0
+
+          suites = [
+              ("nightly", "NIGHTLY_OUTCOME", "pytest-rocm-nightly.xml", "pytest-nightly.log"),
+              ("aime", "AIME_OUTCOME", "pytest-rocm-aime.xml", "pytest-aime.log"),
+          ]
+          rows = []
+          for name, outcome_var, xml_name, log_name in suites:
+              selected = selected_suite == name or selected_suite == "full"
+              outcome = os.environ.get(outcome_var, "skipped")
+              status = "not selected" if not selected else "not run" if outcome == "skipped" else outcome
+              passed, failed, errors, skipped, duration = counts(result_dir / xml_name)
+              rows.append(
+                  f"| {name} | {status} | {passed} | {failed} | {errors} | {skipped} | "
+                  f"{deselected(result_dir / log_name)} | {duration} |"
+              )
+
+          lines = [
+              "# ROCm CI summary",
+              "",
+              f"- Trigger: `{os.environ['GITHUB_EVENT_NAME']}`",
+              f"- Requested suite: `{selected_suite}`",
+              f"- Commit: `{os.environ['GITHUB_SHA']}`",
+              "- GPU target: `2 x gfx1100`",
+              "",
+              "| Pytest suite | Step outcome | Passed | Failed | Errors | Skipped | Deselected | Duration |",
+              "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+              *rows,
+              "",
+              "A suite marked `not selected` was excluded by the workflow mode. "
+              "`Deselected` only counts tests collected and filtered by pytest.",
+          ]
+          summary = "\n".join(lines) + "\n"
+          (result_dir / "summary.md").write_text(summary)
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as output:
+              output.write(summary)
+          PY
 
       - name: Record GPU state
         if: always()
