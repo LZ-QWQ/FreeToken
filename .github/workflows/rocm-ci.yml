@@ -32,7 +32,7 @@ jobs:
       run:
         shell: bash
     container:
-      image: crpi-ygzb1jbfyj9pjrm6.cn-shenzhen.personal.cr.aliyuncs.com/images_hana/freetoken:rocm-ci@sha256:de1d21f7b1a4d9910b6d6c717efd5ee7c95c4c577be42e19de16753f6b1b5f1f
+      image: crpi-ygzb1jbfyj9pjrm6.cn-shenzhen.personal.cr.aliyuncs.com/images_hana/freetoken:rocm-ci@sha256:f28c91d42b4dd9e173190fe7da3c233fc19957ea6dc06b0e06afc3052264feb6
       volumes:
         - /nvme0/data/FreeToken/models:/opt/freetoken-ci/models:ro
         - /nvme0/data/FreeToken/datasets:/opt/freetoken-ci/datasets:ro
@@ -49,7 +49,7 @@ jobs:
       HF_HUB_OFFLINE: "1"
       MAX_JOBS: "8"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      PIP_INDEX_URL: ${{ vars.ROCM_CI_PIP_INDEX_URL || 'https://pypi.org/simple' }}
+      PIP_INDEX_URL: ${{ vars.ROCM_CI_PIP_INDEX_URL || 'https://mirrors.aliyun.com/pypi/simple' }}
       PYTHONUNBUFFERED: "1"
       PYTORCH_ROCM_ARCH: gfx1100
       SUITE: ${{ github.event_name == 'schedule' && 'nightly' || inputs.suite }}
