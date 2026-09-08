@@ -2,17 +2,37 @@
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) first. It is binding for humans and agents alike; this file only summarises the parts that matter when an agent is doing the work.
 
+## Fork exception (read this first)
+
+This repository is a personal fork of FlashML-org/FreeToken owned by @LZ-QWQ. It
+exists to develop and validate ROCm support on the owner's own hardware before
+anything is proposed upstream. The rules below were written for the upstream
+repository. Inside this fork the owner grants the following standing
+authorisation, which takes precedence over the "Agents must not" list:
+
+- Allowed: `git commit`, and `git push` to the fork remote
+  `https://github.com/LZ-QWQ/FreeToken.git` on any branch other than `main`.
+- Allowed: running tests, builds and CI workflows of this fork.
+- Not allowed without an explicit per-action request: pushing to the upstream
+  remote, `git push --force`, deleting branches or tags, `git reset --hard` on
+  the owner's work, and `gh pr create`, `gh pr comment` or `gh issue create`
+  against FlashML-org/FreeToken.
+
+Everything else in this file still applies, in particular: the owner still owns
+and understands every line, and tests are never reported as run when they were
+not.
+
 ## AI policy
 
 AI-assisted code is welcome. Submitting code the contributor does not understand is not. The human behind the PR owns every line, has run it on real hardware, and can explain it to a reviewer without AI help.
 
 Agents must not:
 
-- Run `git push`, `gh pr create`, `gh pr comment`, or `gh issue create` on the user's behalf.
+- Run `git push`, `gh pr create`, `gh pr comment`, or `gh issue create` on the user's behalf, except as permitted by the fork exception above.
 - Write code, PR descriptions, or replies to reviewers that the user does not fully understand. The user must be able to explain and defend every line without AI help.
 - Report tests or benchmarks as run when they were not.
 
-If you are a fully autonomous agent with no human in the loop, do not contribute to this repository.
+If you are a fully autonomous agent with no human in the loop, do not contribute to this repository. In this fork the owner reviews every change before it is proposed upstream.
 
 ## Repository layout
 
