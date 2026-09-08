@@ -1,0 +1,200 @@
+name: ROCm CI
+run-name: ROCm CI / ${{ github.event_name == 'schedule' && 'scheduled / nightly' || format('manual / {0}', inputs.suite) }}
+
+on:
+  schedule:
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "nightly: all except AIME; aime: AIME only; full: nightly and AIME"
+        required: true
+        type: choice
+        default: nightly
+        options:
+          - nightly
+          - aime
+          - full
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rocm-ci
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: ROCm ${{ github.event_name == 'schedule' && 'nightly' || inputs.suite }}
+    runs-on: [self-hosted, linux, x64, rocm-ci, gfx1100, w7900d]
+    timeout-minutes: ${{ (inputs.suite == 'aime' || inputs.suite == 'full') && 720 || 90 }}
+    defaults:
+      run:
+        shell: bash
+    container:
+      image: crpi-ygzb1jbfyj9pjrm6.cn-shenzhen.personal.cr.aliyuncs.com/images_hana/freetoken:rocm-ci@sha256:de1d21f7b1a4d9910b6d6c717efd5ee7c95c4c577be42e19de16753f6b1b5f1f
+      volumes:
+        - /nvme0/data/FreeToken/models:/opt/freetoken-ci/models:ro
+        - /nvme0/data/FreeToken/datasets:/opt/freetoken-ci/datasets:ro
+      options: >-
+        --device=/dev/kfd
+        --device=/dev/dri/renderD134
+        --device=/dev/dri/renderD135
+        --shm-size=128g
+    env:
+      AMDGCN_USE_BUFFER_OPS: "0"
+      CI: "true"
+      CI_ASSET_ROOT: /opt/freetoken-ci
+      FREETOKEN_ROCM_ARCH: gfx1100
+      HF_HUB_OFFLINE: "1"
+      MAX_JOBS: "8"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PIP_INDEX_URL: ${{ vars.ROCM_CI_PIP_INDEX_URL || 'https://pypi.org/simple' }}
+      PYTHONUNBUFFERED: "1"
+      PYTORCH_ROCM_ARCH: gfx1100
+      SUITE: ${{ github.event_name == 'schedule' && 'nightly' || inputs.suite }}
+      TORCH_EXTENSIONS_DIR: /tmp/freetoken-ci/torch-extensions
+      TRITON_CACHE_DIR: /tmp/freetoken-ci/triton
+      XDG_CACHE_HOME: /tmp/freetoken-ci/xdg
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Configure test assets
+        run: |
+          set_asset() {
+            local kind="$1" name="$2" path="$3"
+            if [[ "$kind" == file && -f "$path" ]] || [[ "$kind" == directory && -d "$path" ]]; then
+              printf '%s=%s\n' "$name" "$path" >> "$GITHUB_ENV"
+            else
+              printf '::notice::%s is unavailable at %s; its tests may skip\n' "$name" "$path"
+            fi
+          }
+
+          set_asset file FREETOKEN_AIME25_JSONL "$CI_ASSET_ROOT/datasets/aime25/test-freetoken.jsonl"
+          set_asset file FREETOKEN_GEMMA4_GGUF_GLOB "$CI_ASSET_ROOT/models/gemma-4-26B-A4B-GGUF/gemma-4-26B-A4B-Q8_0.gguf"
+          set_asset directory FREETOKEN_QWEN4EXP_MODEL "$CI_ASSET_ROOT/models/Qwen3.8-Flash-Next-NVFP4"
+          set_asset directory FREETOKEN_REBUILD_TEST_MODEL "$CI_ASSET_ROOT/models/Qwen3.5-0.8B"
+          set_asset directory FREETOKEN_TEST_MODEL "$CI_ASSET_ROOT/models/Qwen3.5-35B-A3B-FP8"
+
+      - name: Validate ROCm environment
+        run: |
+          mkdir -p "$RUNNER_TEMP/rocm-ci" "$TORCH_EXTENSIONS_DIR" "$TRITON_CACHE_DIR" "$XDG_CACHE_HOME"
+          python - <<'PY' | tee "$RUNNER_TEMP/rocm-ci/runtime-before-install.txt"
+          import sys
+
+          import torch
+          import triton
+
+          if not torch.__version__.startswith("2.11.0+rocm7.2.4"):
+              raise SystemExit(f"unsupported PyTorch: {torch.__version__}")
+          if not triton.__version__.startswith("3.7.0+rocm7.2.4"):
+              raise SystemExit(f"unsupported Triton: {triton.__version__}")
+          if torch.version.hip is None or torch.version.cuda is not None:
+              raise SystemExit(
+                  f"expected ROCm PyTorch, got hip={torch.version.hip!r}, "
+                  f"cuda={torch.version.cuda!r}"
+              )
+          if not torch.cuda.is_available() or torch.cuda.device_count() != 2:
+              raise SystemExit(f"expected two ROCm GPUs, found {torch.cuda.device_count()}")
+
+          print(f"python={sys.version.split()[0]}")
+          print(f"torch={torch.__version__}")
+          print(f"torch_hip={torch.version.hip}")
+          print(f"triton={triton.__version__}")
+          for index in range(torch.cuda.device_count()):
+              props = torch.cuda.get_device_properties(index)
+              arch = getattr(props, "gcnArchName", "").split(":", 1)[0]
+              if arch != "gfx1100":
+                  raise SystemExit(f"GPU {index}: expected gfx1100, got {arch!r}")
+              print(f"gpu[{index}]={props.name} arch={arch}")
+          PY
+
+      - name: Install FreeToken
+        run: |
+          { time python -m pip install --no-build-isolation -e ".[dev]"; } \
+            2>&1 | tee "$RUNNER_TEMP/rocm-ci/install.log"
+          python -m pip check 2>&1 | tee "$RUNNER_TEMP/rocm-ci/pip-check.log"
+
+      - name: Verify HIP extensions
+        run: |
+          python - <<'PY' | tee "$RUNNER_TEMP/rocm-ci/runtime-after-install.txt"
+          import subprocess
+
+          import torch
+          import triton
+          import transformers
+          from freetoken.kernel import _cpu_moe, _pinned_tensor, _ple_store
+          from transformers.models.qwen4_exp.configuration_qwen4_exp import Qwen4ExpTextConfig
+          from transformers.models.qwen4_exp.modeling_qwen4_exp import Qwen4ExpTextAttention
+
+          if torch.version.hip is None or torch.version.cuda is not None:
+              raise SystemExit(
+                  f"installation replaced ROCm PyTorch: hip={torch.version.hip!r}, "
+                  f"cuda={torch.version.cuda!r}"
+              )
+          print(f"torch={torch.__version__}")
+          print(f"torch_hip={torch.version.hip}")
+          print(f"triton={triton.__version__}")
+          print(f"transformers={transformers.__version__}")
+          print(f"ple_store={_ple_store.__file__}")
+          for module in (_pinned_tensor, _cpu_moe):
+              linked = subprocess.run(
+                  ["ldd", module.__file__], check=True, capture_output=True, text=True
+              ).stdout
+              print(f"[{module.__name__}]\n{linked}")
+              if "libamdhip64" not in linked:
+                  raise SystemExit(f"{module.__name__} is not linked to libamdhip64")
+          PY
+          printf 'FREETOKEN_QWEN4_HF_PYTHON=%s\n' "$(command -v python)" >> "$GITHUB_ENV"
+
+      - name: Run nightly tests
+        if: env.SUITE == 'nightly' || env.SUITE == 'full'
+        run: |
+          { time python -m pytest tests --ignore=tests/e2e/test_aime.py \
+              -ra --durations=50 \
+              --junitxml="$RUNNER_TEMP/rocm-ci/pytest-rocm-nightly.xml"; } \
+            2>&1 | tee "$RUNNER_TEMP/rocm-ci/pytest-nightly.log"
+
+      - name: Run AIME test
+        if: env.SUITE == 'aime' || env.SUITE == 'full'
+        env:
+          FREETOKEN_AIME_MAX_TOKENS: "16384"
+          FREETOKEN_AIME_MIN_FREE_GIB: "40"
+          FREETOKEN_AIME_REQ: "1"
+          FREETOKEN_AIME_SAMPLES: "3"
+          FREETOKEN_AIME_SERIES: aime25
+          FREETOKEN_TEST_MEM_RATIO: "0.35"
+          FREETOKEN_TEST_MOE_CACHE_SIZE: "4096"
+        run: |
+          { time python -m pytest tests/e2e/test_aime.py -ra --durations=10 \
+              --junitxml="$RUNNER_TEMP/rocm-ci/pytest-rocm-aime.xml"; } \
+            2>&1 | tee "$RUNNER_TEMP/rocm-ci/pytest-aime.log"
+
+      - name: Record GPU state
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/rocm-ci"
+          python - <<'PY' 2>&1 | tee "$RUNNER_TEMP/rocm-ci/gpu-after.txt"
+          import torch
+
+          print(f"available={torch.cuda.is_available()}")
+          print(f"device_count={torch.cuda.device_count()}")
+          for index in range(torch.cuda.device_count()):
+              torch.cuda.set_device(index)
+              torch.cuda.synchronize()
+              free, total = torch.cuda.mem_get_info()
+              print(f"gpu[{index}]={torch.cuda.get_device_name(index)}")
+              print(f"gpu[{index}]_free_gib={free / (1 << 30):.2f}")
+              print(f"gpu[{index}]_total_gib={total / (1 << 30):.2f}")
+          PY
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rocm-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rocm-ci/
+          if-no-files-found: warn
+          retention-days: 14
