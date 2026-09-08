@@ -183,7 +183,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/rocm-ci"
           python - <<'PY'
           import os
-          import re
           import xml.etree.ElementTree as ET
           from pathlib import Path
 
@@ -206,25 +205,18 @@ jobs:
               except (ET.ParseError, TypeError, ValueError):
                   return ["-"] * 5
 
-          def deselected(log_path):
-              if not log_path.is_file():
-                  return "-"
-              matches = re.findall(r"(\d+) deselected", log_path.read_text(errors="replace"))
-              return int(matches[-1]) if matches else 0
-
           suites = [
-              ("nightly", "NIGHTLY_OUTCOME", "pytest-rocm-nightly.xml", "pytest-nightly.log"),
-              ("aime", "AIME_OUTCOME", "pytest-rocm-aime.xml", "pytest-aime.log"),
+              ("nightly", "NIGHTLY_OUTCOME", "pytest-rocm-nightly.xml"),
+              ("aime", "AIME_OUTCOME", "pytest-rocm-aime.xml"),
           ]
           rows = []
-          for name, outcome_var, xml_name, log_name in suites:
+          for name, outcome_var, xml_name in suites:
               selected = selected_suite == name or selected_suite == "full"
               outcome = os.environ.get(outcome_var, "skipped")
               status = "not selected" if not selected else "not run" if outcome == "skipped" else outcome
               passed, failed, errors, skipped, duration = counts(result_dir / xml_name)
               rows.append(
-                  f"| {name} | {status} | {passed} | {failed} | {errors} | {skipped} | "
-                  f"{deselected(result_dir / log_name)} | {duration} |"
+                  f"| {name} | {status} | {passed} | {failed} | {errors} | {skipped} | {duration} |"
               )
 
           lines = [
@@ -235,12 +227,11 @@ jobs:
               f"- Commit: `{os.environ['GITHUB_SHA']}`",
               "- GPU target: `2 x gfx1100`",
               "",
-              "| Pytest suite | Step outcome | Passed | Failed | Errors | Skipped | Deselected | Duration |",
-              "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+              "| Pytest suite | Step outcome | Passed | Failed | Errors | Skipped | Duration |",
+              "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
               *rows,
               "",
-              "A suite marked `not selected` was excluded by the workflow mode. "
-              "`Deselected` only counts tests collected and filtered by pytest.",
+              "A suite marked `not selected` was excluded by the workflow mode.",
           ]
           summary = "\n".join(lines) + "\n"
           (result_dir / "summary.md").write_text(summary)
