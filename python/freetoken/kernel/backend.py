@@ -32,6 +32,35 @@ def is_sgl_kernel_installed() -> bool:
 
 
 @functools.cache
+def is_triton_kernels_installed() -> bool:
+    """OpenAI's ``triton_kernels`` (the fused MoE router used by ``moe.fused.fused_topk``).
+
+    Distinct from the ``triton`` runtime we always depend on: it ships with the Triton
+    source tree and has no Windows wheel. It is also not one of the six ops
+    ``freetoken.kernel.triton`` reimplements, so its call-site carries its own fallback.
+    """
+    return _importable("triton_kernels")
+
+
+@functools.cache
+def is_rocm() -> bool:
+    """True when torch is built for ROCm (AMD GPU)."""
+    import torch
+    return getattr(torch.version, "hip", None) is not None
+
+
+@functools.cache
+def driver_hip_version() -> int | None:
+    """ROCm driver version, or None if undetermined."""
+    # TODO(ROCm): flashinfer/sgl_kernel have no ROCm builds — Triton fallback is used.
+    try:
+        from freetoken.kernel.pinned import _load_pinned_extension
+        return int(_load_pinned_extension().driver_cuda_version()) or None
+    except Exception:
+        return None
+
+
+@functools.cache
 def driver_cuda_version() -> int | None:
     """Max CUDA version the installed NVIDIA driver supports (``13000`` == CUDA 13.0),
     or None if undetermined. Driver-JIT kernels (PTX compiled at runtime, e.g.
