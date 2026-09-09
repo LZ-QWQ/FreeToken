@@ -142,8 +142,6 @@ jobs:
         id: tests
         env:
           FREETOKEN_AIME_MIN_FREE_GIB: "40"
-          FREETOKEN_TEST_MEM_RATIO: "0.35"
-          FREETOKEN_TEST_MOE_CACHE_SIZE: "4096"
         run: |
           { time python -m pytest tests --ignore=tests/e2e/test_aime.py \
               -ra --durations=50 \
