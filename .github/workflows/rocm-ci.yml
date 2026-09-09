@@ -68,6 +68,7 @@ jobs:
 
       - name: Validate ROCm environment
         run: |
+          rm -rf "$RUNNER_TEMP/rocm-ci"
           mkdir -p "$RUNNER_TEMP/rocm-ci" "$TORCH_EXTENSIONS_DIR" "$TRITON_CACHE_DIR" "$XDG_CACHE_HOME"
           python - <<'PY' | tee "$RUNNER_TEMP/rocm-ci/runtime-before-install.txt"
           import sys
