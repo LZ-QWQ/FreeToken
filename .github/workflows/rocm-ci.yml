@@ -1,20 +1,10 @@
 name: ROCm CI
-run-name: ROCm CI / ${{ github.event_name == 'schedule' && 'scheduled / nightly' || format('manual / {0}', inputs.suite) }}
+run-name: ROCm CI / ${{ github.event_name == 'schedule' && 'scheduled' || 'manual' }}
 
 on:
   schedule:
     - cron: "0 19 * * *"
   workflow_dispatch:
-    inputs:
-      suite:
-        description: "nightly: all except AIME; aime: AIME only; full: nightly and AIME"
-        required: true
-        type: choice
-        default: nightly
-        options:
-          - nightly
-          - aime
-          - full
 
 permissions:
   contents: read
@@ -25,9 +15,9 @@ concurrency:
 
 jobs:
   test:
-    name: ROCm ${{ github.event_name == 'schedule' && 'nightly' || inputs.suite }}
+    name: ROCm tests
     runs-on: [self-hosted, linux, x64, rocm-ci, gfx1100, w7900d]
-    timeout-minutes: ${{ (inputs.suite == 'aime' || inputs.suite == 'full') && 720 || 90 }}
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
@@ -52,7 +42,6 @@ jobs:
       PIP_INDEX_URL: ${{ vars.ROCM_CI_PIP_INDEX_URL || 'https://mirrors.aliyun.com/pypi/simple' }}
       PYTHONUNBUFFERED: "1"
       PYTORCH_ROCM_ARCH: gfx1100
-      SUITE: ${{ github.event_name == 'schedule' && 'nightly' || inputs.suite }}
       TORCH_EXTENSIONS_DIR: /tmp/freetoken-ci/torch-extensions
       TRITON_CACHE_DIR: /tmp/freetoken-ci/triton
       XDG_CACHE_HOME: /tmp/freetoken-ci/xdg
@@ -148,18 +137,8 @@ jobs:
           PY
           printf 'FREETOKEN_QWEN4_HF_PYTHON=%s\n' "$(command -v python)" >> "$GITHUB_ENV"
 
-      - name: Run nightly tests
-        id: nightly
-        if: env.SUITE == 'nightly' || env.SUITE == 'full'
-        run: |
-          { time python -m pytest tests --ignore=tests/e2e/test_aime.py \
-              -ra --durations=50 \
-              --junitxml="$RUNNER_TEMP/rocm-ci/pytest-rocm-nightly.xml"; } \
-            2>&1 | tee "$RUNNER_TEMP/rocm-ci/pytest-nightly.log"
-
-      - name: Run AIME test
-        id: aime
-        if: env.SUITE == 'aime' || env.SUITE == 'full'
+      - name: Run tests
+        id: tests
         env:
           FREETOKEN_AIME_MAX_TOKENS: "16384"
           FREETOKEN_AIME_MIN_FREE_GIB: "40"
@@ -169,29 +148,28 @@ jobs:
           FREETOKEN_TEST_MEM_RATIO: "0.35"
           FREETOKEN_TEST_MOE_CACHE_SIZE: "4096"
         run: |
-          { time python -m pytest tests/e2e/test_aime.py -ra --durations=10 \
-              --junitxml="$RUNNER_TEMP/rocm-ci/pytest-rocm-aime.xml"; } \
-            2>&1 | tee "$RUNNER_TEMP/rocm-ci/pytest-aime.log"
+          { time python -m pytest tests -ra --durations=50 \
+              --junitxml="$RUNNER_TEMP/rocm-ci/pytest-rocm.xml"; } \
+            2>&1 | tee "$RUNNER_TEMP/rocm-ci/pytest.log"
 
       - name: Write test summary
         if: always()
         continue-on-error: true
         env:
-          AIME_OUTCOME: ${{ steps.aime.outcome }}
-          NIGHTLY_OUTCOME: ${{ steps.nightly.outcome }}
+          TEST_OUTCOME: ${{ steps.tests.outcome }}
         run: |
           mkdir -p "$RUNNER_TEMP/rocm-ci"
           python - <<'PY'
           import os
+          import re
           import xml.etree.ElementTree as ET
           from pathlib import Path
 
           result_dir = Path(os.environ["RUNNER_TEMP"]) / "rocm-ci"
-          selected_suite = os.environ["SUITE"]
 
-          def counts(xml_path):
+          def counts(xml_path, log_path):
               if not xml_path.is_file():
-                  return ["-"] * 5
+                  return ["-"] * 6
               try:
                   root = ET.parse(xml_path).getroot()
                   test_suites = [root] if "tests" in root.attrib else list(root)
@@ -200,38 +178,29 @@ jobs:
                   errors = sum(int(suite.attrib.get("errors", 0)) for suite in test_suites)
                   skipped = sum(int(suite.attrib.get("skipped", 0)) for suite in test_suites)
                   passed = tests - failed - errors - skipped
+                  log = log_path.read_text(errors="replace") if log_path.is_file() else ""
+                  matches = re.findall(r"(\d+) deselected", log)
+                  deselected = int(matches[-1]) if matches else 0
                   duration = f'{sum(float(suite.attrib.get("time", 0)) for suite in test_suites):.2f}s'
-                  return [passed, failed, errors, skipped, duration]
+                  return [passed, failed, errors, skipped, deselected, duration]
               except (ET.ParseError, TypeError, ValueError):
-                  return ["-"] * 5
+                  return ["-"] * 6
 
-          suites = [
-              ("nightly", "NIGHTLY_OUTCOME", "pytest-rocm-nightly.xml"),
-              ("aime", "AIME_OUTCOME", "pytest-rocm-aime.xml"),
-          ]
-          rows = []
-          for name, outcome_var, xml_name in suites:
-              selected = selected_suite == name or selected_suite == "full"
-              outcome = os.environ.get(outcome_var, "skipped")
-              status = "not selected" if not selected else "not run" if outcome == "skipped" else outcome
-              passed, failed, errors, skipped, duration = counts(result_dir / xml_name)
-              rows.append(
-                  f"| {name} | {status} | {passed} | {failed} | {errors} | {skipped} | {duration} |"
-              )
+          passed, failed, errors, skipped, deselected, duration = counts(
+              result_dir / "pytest-rocm.xml", result_dir / "pytest.log"
+          )
+          outcome = os.environ.get("TEST_OUTCOME", "not run")
 
           lines = [
               "# ROCm CI summary",
               "",
               f"- Trigger: `{os.environ['GITHUB_EVENT_NAME']}`",
-              f"- Requested suite: `{selected_suite}`",
               f"- Commit: `{os.environ['GITHUB_SHA']}`",
               "- GPU target: `2 x gfx1100`",
               "",
-              "| Pytest suite | Step outcome | Passed | Failed | Errors | Skipped | Duration |",
-              "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
-              *rows,
-              "",
-              "A suite marked `not selected` was excluded by the workflow mode.",
+              "| Test scope | Step outcome | Passed | Failed | Errors | Skipped | Deselected | Duration |",
+              "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+              f"| `tests/` | {outcome} | {passed} | {failed} | {errors} | {skipped} | {deselected} | {duration} |",
           ]
           summary = "\n".join(lines) + "\n"
           (result_dir / "summary.md").write_text(summary)
