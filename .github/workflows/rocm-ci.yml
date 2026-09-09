@@ -141,6 +141,7 @@ jobs:
       - name: Run tests
         id: tests
         env:
+          # W7900D has 48 GiB VRAM; FreeToken's 70 GiB default would skip AIME.
           FREETOKEN_AIME_MIN_FREE_GIB: "40"
         run: |
           { time python -m pytest tests --ignore=tests/e2e/test_aime.py \
