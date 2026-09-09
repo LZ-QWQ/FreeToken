@@ -32,6 +32,7 @@ import triton
 import triton.language as tl
 
 from freetoken.kernel.triton.autotune_cache import autotune_cache_kwargs
+from freetoken.utils.arch import get_rocm_gfx_arch
 
 logger = logging.getLogger(__name__)
 
@@ -309,19 +310,21 @@ def _topk_target(top_k, B, dev):
 
 
 @triton.jit
-def _row_barrier(bar_ptr, need):
+def _row_barrier(bar_ptr, need, G):
     # the row's CTAs must be co-resident (cooperative launch), or a lone CTA (G == 1) passes at once.
     # every warp's preceding atomics must be issued before thread 0 announces arrival
     tl.debug_barrier()
-    tl.atomic_add(bar_ptr, 1)
-    n = tl.atomic_add(bar_ptr, 0)
-    while n < need:
+    if G > 1:
+        tl.atomic_add(bar_ptr, 1)
         n = tl.atomic_add(bar_ptr, 0)
+        while n < need:
+            n = tl.atomic_add(bar_ptr, 0)
 
 
 @triton.jit
 def _bits_round(
     probs_ptr, base, start, end, hist_ptr, bar_ptr, target, lo, above, need,
+    G,
     S: tl.constexpr, WIDTH: tl.constexpr, BINS: tl.constexpr, BLOCK: tl.constexpr,
 ):
     jj = tl.arange(0, BINS)
@@ -340,7 +343,7 @@ def _bits_round(
         h = tl.histogram(b, BINS)
         acc += h - tl.where(jj == 0, tl.sum((~inrange).to(tl.int32)), 0)
     tl.atomic_add(hist_ptr + jj, acc)
-    _row_barrier(bar_ptr, need)
+    _row_barrier(bar_ptr, need, G)
     h = tl.load(hist_ptr + jj, cache_modifier=".cg")
     prefix = tl.cumsum(h, 0)
     total = tl.sum(h, 0)
@@ -370,10 +373,10 @@ def _topk_fused(
     brow = bar_ptr + row
     lo = 0
     above = lo
-    lo, above = _bits_round(probs_ptr, base, start, end, hrow, brow, target, lo, above, G, 23, 0, BINS, BLOCK)
-    lo, above = _bits_round(probs_ptr, base, start, end, hrow + BINS, brow, target, lo, above, 2 * G, 15, 1 << 23, BINS, BLOCK)
-    lo, above = _bits_round(probs_ptr, base, start, end, hrow + 2 * BINS, brow, target, lo, above, 3 * G, 7, 1 << 15, BINS, BLOCK)
-    lo, above = _bits_round(probs_ptr, base, start, end, hrow + 3 * BINS, brow, target, lo, above, 4 * G, 0, 1 << 7, BINS, BLOCK)
+    lo, above = _bits_round(probs_ptr, base, start, end, hrow, brow, target, lo, above, G, G, 23, 0, BINS, BLOCK)
+    lo, above = _bits_round(probs_ptr, base, start, end, hrow + BINS, brow, target, lo, above, 2 * G, G, 15, 1 << 23, BINS, BLOCK)
+    lo, above = _bits_round(probs_ptr, base, start, end, hrow + 2 * BINS, brow, target, lo, above, 3 * G, G, 7, 1 << 15, BINS, BLOCK)
+    lo, above = _bits_round(probs_ptr, base, start, end, hrow + 3 * BINS, brow, target, lo, above, 4 * G, G, 0, 1 << 7, BINS, BLOCK)
     _keep_tail(probs_ptr, base, start, end, pid, row, cta, lo.to(tl.float32, bitcast=True), brow, 5 * G,
                ksum_ptr, psum_ptr, u_ptr, out_ptr, tok_ptr, V, G, DRAW, G_POW2, BLOCK)
 
@@ -394,7 +397,7 @@ def _keep_tail(
         s += tl.sum(tl.where(mask & (x >= thr), x, 0.0), 0)
     if DRAW:
         tl.store(psum_ptr + pid, s)
-        _row_barrier(bar_ptr, need)
+        _row_barrier(bar_ptr, need, G)
         goff = tl.arange(0, G_POW2)
         gmask = goff < G
         ps = tl.load(psum_ptr + row * G + goff, mask=gmask, other=0.0, cache_modifier=".cg")
@@ -422,7 +425,7 @@ def _keep_tail(
             tl.store(tok_ptr + row, last_kept)
     else:
         tl.atomic_add(ksum_ptr + row, s)
-        _row_barrier(bar_ptr, need)
+        _row_barrier(bar_ptr, need, G)
         inv = 1.0 / tl.atomic_add(ksum_ptr + row, 0.0)
         for s0 in tl.range(start, end, BLOCK):
             offs = s0 + tl.arange(0, BLOCK)
@@ -437,6 +440,7 @@ _PMBINS = 256
 @triton.jit
 def _pmass_round(
     probs_ptr, base, start, end, priv_ptr, mass_ptr, bar_ptr, target, lo, above, need,
+    G,
     S: tl.constexpr, WIDTH: tl.constexpr, BINS: tl.constexpr, BLOCK: tl.constexpr,
 ):
     # top-p round over the bit pattern: per-bin MASS (exact up to fp32 atomic order) via scatter-add into this
@@ -456,7 +460,7 @@ def _pmass_round(
     # every warp's scatter-adds must land before any thread reads the private bins back
     tl.debug_barrier()
     tl.atomic_add(mass_ptr + jj, tl.load(priv_ptr + jj))
-    _row_barrier(bar_ptr, need)
+    _row_barrier(bar_ptr, need, G)
     m = tl.load(mass_ptr + jj, cache_modifier=".cg")
     prefix = tl.cumsum(m, 0)
     total = tl.sum(m, 0)
@@ -488,10 +492,10 @@ def _topp_fused(
         tk = tl.maximum(tl.load(tk_ptr + row), 1)
         hk = hist_ptr + row * 4 * KBINS
         above_i = lo
-        lo, above_i = _bits_round(probs_ptr, base, start, end, hk, brow, tk, lo, above_i, G, 23, 0, KBINS, BLOCK)
-        lo, above_i = _bits_round(probs_ptr, base, start, end, hk + KBINS, brow, tk, lo, above_i, 2 * G, 15, 1 << 23, KBINS, BLOCK)
-        lo, above_i = _bits_round(probs_ptr, base, start, end, hk + 2 * KBINS, brow, tk, lo, above_i, 3 * G, 7, 1 << 15, KBINS, BLOCK)
-        lo, above_i = _bits_round(probs_ptr, base, start, end, hk + 3 * KBINS, brow, tk, lo, above_i, 4 * G, 0, 1 << 7, KBINS, BLOCK)
+        lo, above_i = _bits_round(probs_ptr, base, start, end, hk, brow, tk, lo, above_i, G, G, 23, 0, KBINS, BLOCK)
+        lo, above_i = _bits_round(probs_ptr, base, start, end, hk + KBINS, brow, tk, lo, above_i, 2 * G, G, 15, 1 << 23, KBINS, BLOCK)
+        lo, above_i = _bits_round(probs_ptr, base, start, end, hk + 2 * KBINS, brow, tk, lo, above_i, 3 * G, G, 7, 1 << 15, KBINS, BLOCK)
+        lo, above_i = _bits_round(probs_ptr, base, start, end, hk + 3 * KBINS, brow, tk, lo, above_i, 4 * G, G, 0, 1 << 7, KBINS, BLOCK)
         thr_k = lo.to(tl.float32, bitcast=True)
         s = 0.0
         for s0 in tl.range(start, end, BLOCK):
@@ -500,7 +504,7 @@ def _topp_fused(
             x = tl.load(probs_ptr + base + offs, mask=mask, other=0.0).to(tl.float32)
             s += tl.sum(tl.where(mask & (x >= thr_k), x, 0.0), 0)
         tl.atomic_add(ksumk_ptr + row, s)
-        _row_barrier(brow, 5 * G)
+        _row_barrier(brow, 5 * G, G)
         target = tl.load(tp_ptr + row) * tl.atomic_add(ksumk_ptr + row, 0.0)
         done = 5
     else:
@@ -510,13 +514,13 @@ def _topp_fused(
     pp = priv_ptr + pid * 4 * PBINS
     above = 0.0
     lo, above = _pmass_round(probs_ptr, base, start, end, pp, mp, brow, target, lo, above, (done + 1) * G,
-                            23, 0, PBINS, BLOCK)
+                            G, 23, 0, PBINS, BLOCK)
     lo, above = _pmass_round(probs_ptr, base, start, end, pp + PBINS, mp + PBINS, brow, target, lo, above,
-                            (done + 2) * G, 15, 1 << 23, PBINS, BLOCK)
+                            (done + 2) * G, G, 15, 1 << 23, PBINS, BLOCK)
     lo, above = _pmass_round(probs_ptr, base, start, end, pp + 2 * PBINS, mp + 2 * PBINS, brow, target, lo, above,
-                            (done + 3) * G, 7, 1 << 15, PBINS, BLOCK)
+                            (done + 3) * G, G, 7, 1 << 15, PBINS, BLOCK)
     lo, above = _pmass_round(probs_ptr, base, start, end, pp + 3 * PBINS, mp + 3 * PBINS, brow, target, lo, above,
-                            (done + 4) * G, 0, 1 << 7, PBINS, BLOCK)
+                            (done + 4) * G, G, 0, 1 << 7, PBINS, BLOCK)
     _keep_tail(probs_ptr, base, start, end, pid, row, cta, lo.to(tl.float32, bitcast=True), brow,
                (done + 5) * G, ksum_ptr, psum_ptr, u_ptr, out_ptr, tok_ptr, V, G, DRAW, G_POW2, BLOCK)
 
@@ -526,7 +530,8 @@ _COOP_CTAS_PER_SM = 2  # the fused kernels use ~80 regs/thread at 8 warps; 4/SM 
 
 
 def _fused_plan(B, V, device, force_single=False):
-    if force_single:
+    # gfx1100 can launch this cooperative grid but hangs in its cross-CTA spin barrier.
+    if force_single or get_rocm_gfx_arch() == "gfx1100":
         return 1, V
     # the cooperative launch needs the whole grid co-resident, so cap B*G by an occupancy budget instead of _plan's one CTA per SM
     g_by_sm = max(1, (_COOP_CTAS_PER_SM * _num_sm(device)) // B)
