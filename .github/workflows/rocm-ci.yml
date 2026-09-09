@@ -148,9 +148,13 @@ jobs:
           FREETOKEN_TEST_MEM_RATIO: "0.35"
           FREETOKEN_TEST_MOE_CACHE_SIZE: "4096"
         run: |
-          { time python -m pytest tests -ra --durations=50 \
-              --junitxml="$RUNNER_TEMP/rocm-ci/pytest-rocm.xml"; } \
+          { time python -m pytest tests --ignore=tests/e2e/test_aime.py \
+              -ra --durations=50 \
+              --junitxml="$RUNNER_TEMP/rocm-ci/pytest-rocm-base.xml"; } \
             2>&1 | tee "$RUNNER_TEMP/rocm-ci/pytest.log"
+          { time python -m pytest tests/e2e/test_aime.py -ra --durations=10 \
+              --junitxml="$RUNNER_TEMP/rocm-ci/pytest-rocm-aime.xml"; } \
+            2>&1 | tee -a "$RUNNER_TEMP/rocm-ci/pytest.log"
 
       - name: Write test summary
         if: always()
@@ -167,12 +171,15 @@ jobs:
 
           result_dir = Path(os.environ["RUNNER_TEMP"]) / "rocm-ci"
 
-          def counts(xml_path, log_path):
-              if not xml_path.is_file():
-                  return ["-"] * 6
+          def counts(xml_paths, log_path):
+              test_suites = []
               try:
-                  root = ET.parse(xml_path).getroot()
-                  test_suites = [root] if "tests" in root.attrib else list(root)
+                  for xml_path in xml_paths:
+                      if xml_path.is_file():
+                          root = ET.parse(xml_path).getroot()
+                          test_suites.extend([root] if "tests" in root.attrib else list(root))
+                  if not test_suites:
+                      return ["-"] * 6
                   tests = sum(int(suite.attrib.get("tests", 0)) for suite in test_suites)
                   failed = sum(int(suite.attrib.get("failures", 0)) for suite in test_suites)
                   errors = sum(int(suite.attrib.get("errors", 0)) for suite in test_suites)
@@ -180,14 +187,15 @@ jobs:
                   passed = tests - failed - errors - skipped
                   log = log_path.read_text(errors="replace") if log_path.is_file() else ""
                   matches = re.findall(r"(\d+) deselected", log)
-                  deselected = int(matches[-1]) if matches else 0
+                  deselected = sum(int(value) for value in matches)
                   duration = f'{sum(float(suite.attrib.get("time", 0)) for suite in test_suites):.2f}s'
                   return [passed, failed, errors, skipped, deselected, duration]
               except (ET.ParseError, TypeError, ValueError):
                   return ["-"] * 6
 
           passed, failed, errors, skipped, deselected, duration = counts(
-              result_dir / "pytest-rocm.xml", result_dir / "pytest.log"
+              [result_dir / "pytest-rocm-base.xml", result_dir / "pytest-rocm-aime.xml"],
+              result_dir / "pytest.log",
           )
           outcome = os.environ.get("TEST_OUTCOME", "not run")
 
