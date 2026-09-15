@@ -45,6 +45,11 @@ jobs:
       XDG_CACHE_HOME: /tmp/freetoken-ci/xdg
 
     steps:
+      - name: Prepare diagnostics
+        run: |
+          rm -rf "$RUNNER_TEMP/rocm-ci"
+          mkdir -p "$RUNNER_TEMP/rocm-ci"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Configure test assets
@@ -66,8 +71,7 @@ jobs:
 
       - name: Validate ROCm environment
         run: |
-          rm -rf "$RUNNER_TEMP/rocm-ci"
-          mkdir -p "$RUNNER_TEMP/rocm-ci" "$TORCH_EXTENSIONS_DIR" "$TRITON_CACHE_DIR" "$XDG_CACHE_HOME"
+          mkdir -p "$TORCH_EXTENSIONS_DIR" "$TRITON_CACHE_DIR" "$XDG_CACHE_HOME"
           python - <<'PY' | tee "$RUNNER_TEMP/rocm-ci/runtime-before-install.txt"
           import sys
 
