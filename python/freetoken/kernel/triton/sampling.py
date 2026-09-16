@@ -530,8 +530,7 @@ _COOP_CTAS_PER_SM = 2  # the fused kernels use ~80 regs/thread at 8 warps; 4/SM 
 
 
 def _fused_plan(B, V, device, force_single=False):
-    # gfx1100 can launch this cooperative grid but hangs in its cross-CTA spin barrier.
-    if force_single or get_rocm_gfx_arch() == "gfx1100":
+    if force_single:
         return 1, V
     # the cooperative launch needs the whole grid co-resident, so cap B*G by an occupancy budget instead of _plan's one CTA per SM
     g_by_sm = max(1, (_COOP_CTAS_PER_SM * _num_sm(device)) // B)

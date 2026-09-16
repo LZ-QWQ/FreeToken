@@ -5,10 +5,11 @@ from freetoken.kernel.triton import sampling
 from freetoken.utils.arch import get_rocm_gfx_arch
 
 
-def test_rocm_exact_sampling_uses_one_cta(monkeypatch):
+def test_rocm_exact_sampling_keeps_multi_cta_plan(monkeypatch):
     monkeypatch.setattr(sampling, "get_rocm_gfx_arch", lambda: "gfx1100")
+    monkeypatch.setattr(sampling, "_num_sm", lambda _device: 48)
 
-    assert sampling._fused_plan(1, 248_320, "cuda") == (1, 248_320)
+    assert sampling._fused_plan(1, 248_320, "cuda") == (61, 4_071)
 
 
 def test_cuda_exact_sampling_keeps_multi_cta_plan(monkeypatch):
@@ -21,7 +22,7 @@ def test_cuda_exact_sampling_keeps_multi_cta_plan(monkeypatch):
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="a GPU is required")
 def test_gfx1100_exact_sampling_matches_torch():
     if get_rocm_gfx_arch() != "gfx1100":
-        pytest.skip("this regression covers the gfx1100 single-CTA path")
+        pytest.skip("this regression covers the gfx1100 multi-CTA path")
 
     generator = torch.Generator(device="cuda").manual_seed(7)
     probs = torch.rand((1, 248_320), device="cuda", generator=generator)

@@ -22,7 +22,7 @@ jobs:
       run:
         shell: bash
     container:
-      image: crpi-ygzb1jbfyj9pjrm6.cn-shenzhen.personal.cr.aliyuncs.com/images_hana/freetoken:rocm-ci@sha256:f28c91d42b4dd9e173190fe7da3c233fc19957ea6dc06b0e06afc3052264feb6
+      image: crpi-ygzb1jbfyj9pjrm6.cn-shenzhen.personal.cr.aliyuncs.com/images_hana/freetoken:rocm-ci-fix
       volumes:
         - /nvme0/data/FreeToken/models:/opt/freetoken-ci/models:ro
         - /nvme0/data/FreeToken/datasets:/opt/freetoken-ci/datasets:ro
