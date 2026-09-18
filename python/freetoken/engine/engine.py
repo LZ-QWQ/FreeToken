@@ -1097,7 +1097,7 @@ def _profile_gpu(index: "int | None" = None) -> Tuple[str | None, str | None]:
 
 
 def _ensure_expandable_segments() -> None:
-    """Default the CUDA allocator to expandable segments.
+    """Default the CUDA allocator to expandable segments on CUDA.
 
     The motivating case is the offload prefill, which repeatedly dequantizes
     variable-sized NVFP4 expert blocks to BF16 (a different size per layer as the
@@ -1111,8 +1111,14 @@ def _ensure_expandable_segments() -> None:
     setting via the runtime API instead. Must run before the first CUDA allocation (the
     caller guarantees CUDA is not yet initialized). Any user-provided allocator config
     is respected and left untouched.
+
+    PyTorch ROCm's expandable-segment allocator can reject a large contiguous expert-cache
+    bank even when the device has ample free memory. Keep ROCm on its native allocator;
+    users can still opt in explicitly through either allocator environment variable.
     """
     if os.environ.get("PYTORCH_ALLOC_CONF") or os.environ.get("PYTORCH_CUDA_ALLOC_CONF"):
+        return
+    if is_rocm():
         return
     try:
         torch.cuda.memory._set_allocator_settings("expandable_segments:True")

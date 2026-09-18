@@ -11,6 +11,20 @@ from freetoken.engine.cache_budget import expert_bytes_per_slot, plan_cache_budg
 from freetoken.engine.engine import _pin_budget_bytes
 
 
+def test_rocm_does_not_force_expandable_segments(monkeypatch):
+    import freetoken.engine.engine as engine
+
+    monkeypatch.delenv("PYTORCH_ALLOC_CONF", raising=False)
+    monkeypatch.delenv("PYTORCH_CUDA_ALLOC_CONF", raising=False)
+    monkeypatch.setattr(engine, "is_rocm", lambda: True)
+    calls = []
+    monkeypatch.setattr(torch.cuda.memory, "_set_allocator_settings", calls.append)
+
+    engine._ensure_expandable_segments()
+
+    assert calls == []
+
+
 def test_moe_priority_fills_experts_up_to_total():
     # budget large enough to cache every expert; KV gets the remainder.
     # per_expert=100, cache_per_page=10, total=8 experts (L*E), E=4.
@@ -218,7 +232,7 @@ def test_adjust_config_resolves_num_tokens_generic():
         cuda_graph_bs = [1, 2]
         max_seq_len = 1024
         page_size = 1
-        attention_backend = "fi"
+        attention_backend = "triton" if torch.version.hip is not None else "fi"
         nvfp4_backend = "auto"
         num_page_override = None
         num_token_override = 5000
@@ -350,7 +364,7 @@ def _offload_engine_config(**overrides):
         model_path="/tmp/freetoken-test-model",
         tp_info=DistributedInfo(rank=0, size=1),
         dtype=torch.bfloat16,
-        attention_backend="fi",
+        attention_backend="triton" if torch.version.hip is not None else "fi",
         **overrides,
     )
     object.__setattr__(
