@@ -119,5 +119,20 @@ def test_gemma4_router_uses_sgl_kernel_topk_softmax_semantics():
     topk_logits, ref_ids = torch.topk(logits.float(), cfg.num_experts_per_tok, dim=-1)
     ref_weights = torch.softmax(topk_logits, dim=-1) * per_expert_scale[ref_ids].float()
 
-    torch.testing.assert_close(ids, ref_ids.to(torch.int32))
-    torch.testing.assert_close(weights, ref_weights, rtol=2e-4, atol=2e-4)
+    if torch.version.hip is None:
+        torch.testing.assert_close(ids, ref_ids.to(torch.int32))
+        torch.testing.assert_close(weights, ref_weights, rtol=2e-4, atol=2e-4)
+    else:
+        # torch.topk does not specify which expert wins a boundary tie.  ROCm
+        # and the deterministic Triton router may therefore return different
+        # IDs for equal bf16 logits; the selected scores and their weights are
+        # the portable contract.
+        selected_logits = logits.float().gather(1, ids.long())
+        torch.testing.assert_close(
+            selected_logits.sort(dim=-1, descending=True).values,
+            topk_logits.sort(dim=-1, descending=True).values,
+        )
+        selected_weights = (
+            torch.softmax(selected_logits, dim=-1) * per_expert_scale[ids.long()].float()
+        )
+        torch.testing.assert_close(weights, selected_weights, rtol=2e-4, atol=2e-4)
