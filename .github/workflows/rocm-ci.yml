@@ -3,7 +3,7 @@ run-name: ROCm CI / ${{ github.event_name == 'schedule' && 'scheduled' || 'manua
 
 on:
   schedule:
-    - cron: "0 19 * * *"
+    - cron: "0 11 * * *"
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
       run:
         shell: bash
     container:
-      image: crpi-ygzb1jbfyj9pjrm6.cn-shenzhen.personal.cr.aliyuncs.com/images_hana/freetoken:rocm-ci@sha256:f28c91d42b4dd9e173190fe7da3c233fc19957ea6dc06b0e06afc3052264feb6
+      image: crpi-ygzb1jbfyj9pjrm6.cn-shenzhen.personal.cr.aliyuncs.com/images_hana/freetoken:rocm7.14.1-ci-dev1@sha256:65bfbe0c6affc15453abdb2870288c5d1cf8cfd207e9033ca473a982d36bfa77
       volumes:
         - /nvme0/data/FreeToken/models:/opt/freetoken-ci/models:ro
         - /nvme0/data/FreeToken/datasets:/opt/freetoken-ci/datasets:ro
