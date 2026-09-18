@@ -9,6 +9,8 @@ import torch
 import triton
 import triton.language as tl
 
+from freetoken.utils.arch import is_rocm
+
 
 @triton.jit
 def _qsa_sparse_paged_gqa_splitk_kernel(
@@ -335,7 +337,9 @@ def qsa_sparse_paged_attention(
         BLOCK_M=block_m,
         BLOCK_N=block_n,
         num_warps=partial_warps,
-        num_stages=2,
+        # The two-stage GB300 profile needs 65,792 bytes of LDS for the
+        # shipping head shape, just above gfx1100's 64 KiB limit.
+        num_stages=1 if is_rocm() else 2,
     )
     if num_splits == 1:
         return out

@@ -281,7 +281,18 @@ def test_block_topk_matches_torch_topk(n_blocks: int, width: int, bs: int, mode:
     expected = _torch_topk_blocks(logits, visible, width)
 
     # Selection is a set: torch.topk orders by descending score, the kernel by column id.
-    torch.testing.assert_close(blocks.sort(-1).values, expected.sort(-1).values)
+    if torch.version.hip is not None and mode == "ties":
+        # torch.topk does not define which columns win at a tied boundary.
+        # Compare the selected score multiset while the checks below continue
+        # to enforce valid, packed, unique kernel indices.
+        actual_scores = logits.gather(1, blocks.long())
+        expected_scores = logits.gather(1, expected.long())
+        torch.testing.assert_close(
+            actual_scores.sort(-1, descending=True).values,
+            expected_scores.sort(-1, descending=True).values,
+        )
+    else:
+        torch.testing.assert_close(blocks.sort(-1).values, expected.sort(-1).values)
     live = (blocks >= 0).sum(-1)
     torch.testing.assert_close(live, (expected >= 0).sum(-1))
     # expand.py reads ranks [0, complete_blocks), so a -1 may only sit in the tail.

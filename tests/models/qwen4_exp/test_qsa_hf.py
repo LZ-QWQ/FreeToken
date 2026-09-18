@@ -115,6 +115,34 @@ def _jaccard(indices, selection):
     return torch.tensor(scores)
 
 
+def _assert_rocm_tie_equivalent(indices, selection, scores, positions, ratio, rows):
+    """Allow different block IDs only when their fp32 reference scores are tied."""
+    for row in rows.tolist():
+        visible = (int(positions[row]) + 1) // ratio
+        tail_start = visible * ratio
+        mine = set(indices[row][indices[row] >= 0].tolist())
+        theirs = set(selection[row].tolist())
+
+        mine_tail = {token for token in mine if token >= tail_start}
+        their_tail = {token for token in theirs if token >= tail_start}
+        assert mine_tail == their_tail
+
+        mine_blocks = {token // ratio for token in mine if token < tail_start}
+        their_blocks = {token // ratio for token in theirs if token < tail_start}
+        missing = sorted(their_blocks - mine_blocks)
+        extra = sorted(mine_blocks - their_blocks)
+        assert len(missing) == len(extra) and missing
+
+        for block in mine_blocks:
+            assert set(range(block * ratio, (block + 1) * ratio)) <= mine
+        for block in their_blocks:
+            assert set(range(block * ratio, (block + 1) * ratio)) <= theirs
+
+        missing_scores = scores[row, missing].sort().values
+        extra_scores = scores[row, extra].sort().values
+        torch.testing.assert_close(missing_scores, extra_scores, rtol=0, atol=0)
+
+
 @requires_cuda
 def test_single_layer_matches_hf_reference(monkeypatch):
     config = parsed_config()
@@ -139,7 +167,20 @@ def test_single_layer_matches_hf_reference(monkeypatch):
         scores, batch.positions, args.index_ratio, args.index_budget
     )
     jaccard = _jaccard(indices, reference_selection)
-    assert jaccard.min() >= 0.97, f"worst-row Jaccard {jaccard.min():.4f}"
+    if torch.version.hip is None:
+        assert jaccard.min() >= 0.97, f"worst-row Jaccard {jaccard.min():.4f}"
+    else:
+        # ReLU can leave more exact-zero blocks at the cutoff than top-k has room
+        # for. torch.topk and the Triton selector need not choose the same IDs from
+        # that tie, so retain the Jaccard guard and inspect only the outlier rows.
+        _assert_rocm_tie_equivalent(
+            indices,
+            reference_selection,
+            scores,
+            batch.positions,
+            args.index_ratio,
+            (jaccard < 0.97).nonzero().flatten(),
+        )
 
     own_selection = [row[row >= 0].long().sort().values for row in indices]
     reference = _hf_layer_output(x, attn, config, batch.positions, own_selection)
