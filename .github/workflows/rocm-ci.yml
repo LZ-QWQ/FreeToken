@@ -100,7 +100,7 @@ jobs:
 
       - name: Install FreeToken
         run: |
-          { time python -m pip install --no-build-isolation -e ".[dev]"; } \
+          { time python -m pip install --no-build-isolation -e .; } \
             2>&1 | tee "$RUNNER_TEMP/rocm-ci/install.log"
           python -m pip check 2>&1 | tee "$RUNNER_TEMP/rocm-ci/pip-check.log"
 
@@ -201,25 +201,6 @@ jobs:
           (result_dir / "summary.md").write_text(summary)
           with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as output:
               output.write(summary)
-          PY
-
-      - name: Record GPU state
-        if: always()
-        continue-on-error: true
-        run: |
-          mkdir -p "$RUNNER_TEMP/rocm-ci"
-          python - <<'PY' 2>&1 | tee "$RUNNER_TEMP/rocm-ci/gpu-after.txt"
-          import torch
-
-          print(f"available={torch.cuda.is_available()}")
-          print(f"device_count={torch.cuda.device_count()}")
-          for index in range(torch.cuda.device_count()):
-              torch.cuda.set_device(index)
-              torch.cuda.synchronize()
-              free, total = torch.cuda.mem_get_info()
-              print(f"gpu[{index}]={torch.cuda.get_device_name(index)}")
-              print(f"gpu[{index}]_free_gib={free / (1 << 30):.2f}")
-              print(f"gpu[{index}]_total_gib={total / (1 << 30):.2f}")
           PY
 
       - name: Upload diagnostics
