@@ -23,6 +23,7 @@ from freetoken.kernel.triton.dsv4.fused_moe import (
     fused_swiglu,
 )
 from freetoken.moe.fused import moe_align_block_size
+from freetoken.utils.arch import is_rocm
 
 _TL_DTYPE = None
 
@@ -198,7 +199,9 @@ def routed_experts_fp4_prefill(
     round-tripped activations; differs from the GEMV only in fp32 accumulation
     order (tl.dot tree vs sequential K-walk)."""
     T, top_k = slots.shape
-    if T * top_k < _GROUPED_MIN_ROUTES:
+    # The grouped kernel is an H100 optimization; ROCm uses the portable
+    # per-route implementation over the same packed expert banks.
+    if is_rocm() or T * top_k < _GROUPED_MIN_ROUTES:
         return routed_experts_fp4(
             x, slots, topk_weights,
             gate_up_packed, gate_up_scale, down_packed, down_scale, swiglu_limit,

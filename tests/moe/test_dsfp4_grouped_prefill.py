@@ -60,6 +60,10 @@ def _assert_one_ulp(out, ref):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
+@pytest.mark.skipif(
+    torch.version.hip is not None,
+    reason="the grouped prefill kernel is a CUDA/H100 optimization",
+)
 @pytest.mark.parametrize("block_m", [16, 64])
 def test_grouped_gemms_within_one_ulp_of_gemv(block_m):
     from freetoken.kernel.triton.dsv4.fp8_linear import (
