@@ -1249,6 +1249,10 @@ def _ensure_expandable_segments() -> None:
     """
     if os.environ.get("PYTORCH_ALLOC_CONF") or os.environ.get("PYTORCH_CUDA_ALLOC_CONF"):
         return
+    # ROCm's expandable-segment allocator can reject otherwise-valid large allocations
+    # (20 GiB on 48 GiB gfx1100). Keep the default unless the user configured it above.
+    if torch.version.hip is not None:
+        return
     try:
         torch.cuda.memory._set_allocator_settings("expandable_segments:True")
     except Exception as exc:  # pragma: no cover - depends on torch build
