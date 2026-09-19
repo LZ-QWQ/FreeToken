@@ -145,7 +145,13 @@ def test_chunked_prefill_matches_one_shot(cut: int):
     attn.forward(x[:cut], fixture.batch([head], "prefill"))
     tail = fixture.req(1, cut, length)
     got = attn.forward(x[cut:], fixture.batch([tail], "prefill"))
-    assert torch.equal(got, one_shot[cut:])
+    if torch.version.hip is None:
+        assert torch.equal(got, one_shot[cut:])
+    else:
+        # The one-shot and chunked calls use different GEMM batch shapes. ROCm
+        # may round their bf16 projections differently even though both paths
+        # independently match the fp32 dense oracle above.
+        torch.testing.assert_close(got, one_shot[cut:], rtol=2e-2, atol=2e-3)
 
 
 @requires_cuda
