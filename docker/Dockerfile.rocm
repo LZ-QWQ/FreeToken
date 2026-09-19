@@ -1,0 +1,73 @@
+FROM rocm/dev-ubuntu-24.04:7.14.1-full@sha256:6f0018bfa5cea583e7494c40a28ee2f0f727a0bd188d4378114ec1614ef0183a
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      cmake git pkg-config python3.12-venv xxd \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3.12 -m venv /opt/venv
+
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:/opt/rocm/bin:${PATH}
+
+RUN python -m pip install --no-cache-dir --upgrade \
+      pip "setuptools>=77,<82" wheel ninja "numpy>=2.0,<2.5" \
+    && python -m pip install --no-cache-dir \
+      --index-url https://repo.amd.com/rocm/whl-multi-arch \
+      "torch[device-all]==2.11.0+rocm7.14.1" \
+      "torchvision[device-all]==0.26.0+rocm7.14.1" \
+      "torchaudio==2.11.0+rocm7.14.1" \
+      "triton==3.8.0+git4cff872c.rocm7.14.1"
+
+ARG MAX_JOBS=96
+ARG ROCM_SYSTEMS_COMMIT=ca887ee80abfb82671fe1d6d8da708a713438e05
+ARG ROCR_DMABUF_FIX=096e6f1b729a7d6f68a1cd333eb565ed382e47ca
+ARG ROCR_SOVERSION=1.21.0
+RUN rocr_target="$(readlink -f /opt/rocm/lib/libhsa-runtime64.so.1)" \
+    && test "${rocr_target}" = "/opt/rocm/core-7.14/lib/libhsa-runtime64.so.${ROCR_SOVERSION}" \
+    && test -f /opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib/libhsa-runtime64.so.1 \
+    && mkdir -p /root/rocm-systems \
+    && git -C /root/rocm-systems init \
+    && git -C /root/rocm-systems remote add origin https://github.com/ROCm/rocm-systems.git \
+    && git -C /root/rocm-systems sparse-checkout init --cone \
+    && git -C /root/rocm-systems sparse-checkout set projects/rocr-runtime \
+    && git -C /root/rocm-systems fetch --depth 1 --filter=blob:none origin "${ROCM_SYSTEMS_COMMIT}" \
+    && git -C /root/rocm-systems checkout --detach FETCH_HEAD \
+    && git -C /root/rocm-systems fetch --depth 2 --filter=blob:none origin "${ROCR_DMABUF_FIX}" \
+    && git -C /root/rocm-systems cherry-pick --no-commit "${ROCR_DMABUF_FIX}" \
+    && PKG_CONFIG_PATH=/opt/rocm/core-7.14/lib/rocm_sysdeps/lib/pkgconfig \
+      cmake -S /root/rocm-systems/projects/rocr-runtime -B /root/rocr-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_PREFIX_PATH="/opt/rocm;/opt/rocm/llvm" \
+        -DCMAKE_INCLUDE_PATH=/opt/rocm/core-7.14/lib/rocm_sysdeps/include \
+        -DCMAKE_LIBRARY_PATH=/opt/rocm/core-7.14/lib/rocm_sysdeps/lib \
+        -DBUILD_SHARED_LIBS=ON \
+    && cmake --build /root/rocr-build --target hsa-runtime64 --parallel "${MAX_JOBS}" \
+    && cp "/root/rocr-build/rocr/lib/libhsa-runtime64.so.${ROCR_SOVERSION}" "${rocr_target}" \
+    && cp "/root/rocr-build/rocr/lib/libhsa-runtime64.so.${ROCR_SOVERSION}" \
+      /opt/venv/lib/python3.12/site-packages/_rocm_sdk_core/lib/libhsa-runtime64.so.1 \
+    && rm -rf /root/rocm-systems /root/rocr-build
+
+RUN python -m pip install --no-cache-dir \
+      "apache-tvm-ffi==0.1.13.post3" \
+      "einops>=0.8,<1" \
+      "fastapi>=0.115,<1" \
+      "flashlib==0.3.0" \
+      "gguf>=0.19,<1" \
+      "huggingface_hub>=1.5,<2" \
+      "msgpack>=1.1,<2" \
+      "modelscope>=1.37,<2" \
+      "numpy>=2.0,<2.5" \
+      "openai>=2.0,<3" \
+      "partial-json-parser>=0.2,<1" \
+      "pillow>=10,<13" \
+      "prompt_toolkit>=3.0,<4" \
+      "pydantic>=2.9,<3" \
+      "pytest>=6.0" \
+      "pyzmq>=27,<28" \
+      "safetensors>=0.6,<1" \
+      "tqdm>=4.66,<5" \
+      "transformers==5.16.1" \
+      "uvicorn>=0.30,<1" \
+    && python -m pip check \
+    && python -c "import torch, triton; assert torch.__version__ == '2.11.0+rocm7.14.1'; assert torch.version.hip == '7.14.60850'; assert torch.version.cuda is None; assert triton.__version__ == '3.8.0'"
