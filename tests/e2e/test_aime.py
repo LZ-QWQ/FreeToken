@@ -198,7 +198,10 @@ def build_llm(model_path: Path) -> LLM:
 
 
 def visible_gpu_index() -> int:
-    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if torch.version.hip is not None:
+        visible = os.environ.get("ROCR_VISIBLE_DEVICES") or os.environ.get("HIP_VISIBLE_DEVICES")
+    else:
+        visible = os.environ.get("CUDA_VISIBLE_DEVICES")
     if not visible:
         return 0
     first = visible.split(",", 1)[0].strip()
@@ -206,6 +209,19 @@ def visible_gpu_index() -> int:
 
 
 def free_gpu_memory_gib() -> float:
+    if torch.version.hip is not None:
+        result = subprocess.run(
+            ["rocm-smi", "--showmeminfo", "vram", "--json"],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        target = visible_gpu_index()
+        memory = json.loads(result.stdout)[f"card{target}"]
+        total = int(memory["VRAM Total Memory (B)"])
+        used = int(memory["VRAM Total Used Memory (B)"])
+        return (total - used) / 2**30
+
     result = subprocess.run(
         [
             "nvidia-smi",
