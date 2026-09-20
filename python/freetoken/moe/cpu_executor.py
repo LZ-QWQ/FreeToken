@@ -27,6 +27,7 @@ task pointers that the subsequent capture embeds in its host/memcpy nodes.
 
 from __future__ import annotations
 
+import functools
 import os
 import threading
 import time
@@ -81,6 +82,23 @@ _ACT_IDS = {
 
 # Weight-format ids must match WFmt in csrc/cpu_moe/cpu_moe_ext.cpp.
 _WFMT_IDS = {"bf16": 0, "nvfp4": 1, "mxfp4_triton": 2, "ds_fp4": 3, "q4_0": 4}
+
+
+@functools.cache
+def _rocm_memops_probe(device_index: int) -> bool:
+    """Cache the HIP graph-memops capability probe per device. Repeating ROCm 7.14's
+    beta graph setup can wedge the process; the capability cannot change during it."""
+    from freetoken.kernel import _cpu_moe
+
+    with torch.cuda.device(device_index):
+        scratch = alloc_pinned_tensor(1, dtype=torch.int64)
+        scratch.zero_()
+        return bool(
+            _cpu_moe.memops_probe(
+                torch.cuda.current_stream().cuda_stream,
+                scratch.data_ptr(),
+            )
+        )
 
 
 def compiled_extension_supports(activation: str) -> bool:
@@ -223,11 +241,15 @@ class CpuMoeExecutor:
         self._flag_sync = _FLAG_SYNC and device.type == "cuda"
         self._cpu_moe = _cpu_moe  # module ref for the decode-path memop calls
         if self._flag_sync:
-            probe_scratch = alloc_pinned_tensor(1, dtype=torch.int64)
-            probe_scratch.zero_()
-            if not _cpu_moe.memops_probe(
-                torch.cuda.current_stream().cuda_stream, probe_scratch.data_ptr()
-            ):
+            if _IS_ROCM:
+                memops_available = _rocm_memops_probe(torch.cuda.current_device())
+            else:
+                probe_scratch = alloc_pinned_tensor(1, dtype=torch.int64)
+                probe_scratch.zero_()
+                memops_available = _cpu_moe.memops_probe(
+                    torch.cuda.current_stream().cuda_stream, probe_scratch.data_ptr()
+                )
+            if not memops_available:
                 if _IS_ROCM:
                     logger.info_rank0(
                         "cpu-moe flag handshake unavailable: stream memory operations "

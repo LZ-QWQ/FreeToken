@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -86,6 +87,32 @@ def test_cpu_moe_flag_slots_keep_eager_headroom_for_small_graph_sets():
     config = SimpleNamespace(cuda_graph_bs=[1, 2, 2, 4], cuda_graph_max_bs=128)
 
     assert engine._cpu_moe_flag_slots_per_layer(config, free_memory=0) == 16
+
+
+def test_rocm_memops_probe_is_cached_per_device(monkeypatch):
+    import freetoken.kernel as kernel
+    import freetoken.moe.cpu_executor as cpu_executor
+
+    calls = []
+    scratch = SimpleNamespace(zero_=lambda: None, data_ptr=lambda: 202)
+    extension = SimpleNamespace(
+        memops_probe=lambda stream, address: calls.append((stream, address)) or True
+    )
+    monkeypatch.setattr(kernel, "_cpu_moe", extension, raising=False)
+    monkeypatch.setattr(cpu_executor, "alloc_pinned_tensor", lambda *args, **kwargs: scratch)
+    monkeypatch.setattr(
+        cpu_executor.torch.cuda,
+        "current_stream",
+        lambda: SimpleNamespace(cuda_stream=101),
+    )
+    monkeypatch.setattr(cpu_executor.torch.cuda, "device", lambda _index: nullcontext())
+    cpu_executor._rocm_memops_probe.cache_clear()
+    try:
+        assert cpu_executor._rocm_memops_probe(0)
+        assert cpu_executor._rocm_memops_probe(0)
+        assert calls == [(101, 202)]
+    finally:
+        cpu_executor._rocm_memops_probe.cache_clear()
 
 
 def test_cuda_flag_memops_keep_module_level_api(monkeypatch):
