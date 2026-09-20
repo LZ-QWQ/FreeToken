@@ -2,6 +2,34 @@ import pytest
 import torch
 
 
+@pytest.mark.skipif(torch.version.hip is None, reason="needs ROCm")
+def test_rocm_moe_align_assigns_each_expert_block():
+    from freetoken.moe.fused import moe_align_block_size
+
+    topk_ids = torch.tensor(
+        [[0, 1], [2, 3], [3, 0], [1, 2], [0, 2], [3, 1], [2, 0], [1, 3]],
+        device="cuda",
+        dtype=torch.int32,
+    )
+    block_size = 16
+    sorted_ids, expert_ids, num_tokens_post_pad = moe_align_block_size(
+        topk_ids,
+        block_size,
+        num_experts=4,
+    )
+
+    torch.cuda.synchronize()
+    assert num_tokens_post_pad.item() == 4 * block_size
+    assert expert_ids[:4].tolist() == [0, 1, 2, 3]
+
+    flattened = topk_ids.flatten()
+    sentinel = flattened.numel()
+    for expert, block in enumerate(sorted_ids[: 4 * block_size].view(4, block_size)):
+        routes = block[block != sentinel]
+        assert routes.numel() == 4
+        assert (flattened[routes.long()] == expert).all()
+
+
 def _activation_and_mul(gate_up: torch.Tensor, activation: str) -> torch.Tensor:
     gate, up = gate_up.chunk(2, dim=-1)
     if activation == "silu":
