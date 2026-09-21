@@ -1,22 +1,20 @@
 name: ROCm CI
-run-name: ROCm CI / ${{ github.event_name == 'schedule' && 'scheduled' || 'manual' }}
+run-name: ROCm CI / manual / R9700
 
 on:
-  schedule:
-    - cron: "0 11 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: rocm-ci-w7900d
+  group: rocm-ci-r9700
   cancel-in-progress: false
 
 jobs:
   test:
     name: ROCm tests
-    runs-on: [self-hosted, linux, x64, rocm-ci, gfx1100, w7900d]
+    runs-on: [self-hosted, linux, x64, rocm-ci, gfx1201, r9700]
     timeout-minutes: 90
     defaults:
       run:
@@ -33,13 +31,13 @@ jobs:
     env:
       CI: "true"
       CI_ASSET_ROOT: /opt/freetoken-ci
-      FREETOKEN_ROCM_ARCH: gfx1100
+      FREETOKEN_ROCM_ARCH: gfx1201
       MAX_JOBS: "64"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PIP_INDEX_URL: ${{ vars.ROCM_CI_PIP_INDEX_URL || 'https://mirrors.aliyun.com/pypi/simple' }}
       PYTHONUNBUFFERED: "1"
-      PYTORCH_ROCM_ARCH: gfx1100
-      ROCR_VISIBLE_DEVICES: "4,5"
+      PYTORCH_ROCM_ARCH: gfx1201
+      ROCR_VISIBLE_DEVICES: "0,1"
       TORCH_EXTENSIONS_DIR: /tmp/freetoken-ci/torch-extensions
       TRITON_CACHE_DIR: /tmp/freetoken-ci/triton
       XDG_CACHE_HOME: /tmp/freetoken-ci/xdg
@@ -93,8 +91,8 @@ jobs:
           for index in range(torch.cuda.device_count()):
               props = torch.cuda.get_device_properties(index)
               arch = getattr(props, "gcnArchName", "").split(":", 1)[0]
-              if arch != "gfx1100":
-                  raise SystemExit(f"GPU {index}: expected gfx1100, got {arch!r}")
+              if arch != "gfx1201":
+                  raise SystemExit(f"GPU {index}: expected gfx1201, got {arch!r}")
               print(f"gpu[{index}]={props.name} arch={arch}")
           PY
 
@@ -126,8 +124,7 @@ jobs:
       - name: Run tests
         id: tests
         env:
-          # W7900D has 48 GiB VRAM; FreeToken's 70 GiB default would skip AIME.
-          FREETOKEN_AIME_MIN_FREE_GIB: "40"
+          FREETOKEN_AIME_MIN_FREE_GIB: "30"
         run: |
           set +e
           { time python -m pytest tests --ignore=tests/e2e/test_aime.py \
@@ -191,7 +188,7 @@ jobs:
               "",
               f"- Trigger: `{os.environ['GITHUB_EVENT_NAME']}`",
               f"- Commit: `{os.environ['GITHUB_SHA']}`",
-              "- GPU target: `2 x gfx1100`",
+              "- GPU target: `2 x gfx1201`",
               "",
               "| Test scope | Step outcome | Passed | Failed | Errors | Skipped | Deselected | Duration |",
               "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
